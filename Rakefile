@@ -1,85 +1,89 @@
+require 'jsonlint/rake_task'
+require 'metadata-json-lint/rake_task'
+require 'puppet-lint/tasks/puppet-lint'
+require 'puppet-syntax/tasks/puppet-syntax'
+require 'puppet_blacksmith/rake_tasks'
+require 'puppet-strings/tasks'
 require 'puppetlabs_spec_helper/rake_tasks'
+require 'rubocop/rake_task'
+require 'semantic_puppet'
+require 'git'
 
-# load optional tasks for releases
-# only available if gem group releases is installed
-begin
-  require 'voxpupuli/release/rake_tasks'
-rescue LoadError
+GREEN="\033[32m".freeze
+RESET="\033[0m".freeze
+TAG_PATTERN="v%s".freeze
+
+exclude_paths = [
+  'bundle/**/*',
+  'pkg/**/*',
+  'vendor/**/*',
+  'spec/**/*'
+]
+
+JsonLint::RakeTask.new do |t|
+  t.paths = %w[**/*.json]
 end
 
-PuppetLint.configuration.log_format = '%{path}:%{line}:%{check}:%{KIND}:%{message}'
-
-desc 'Auto-correct puppet-lint offenses'
-task 'lint:auto_correct' do
-  Rake::Task[:lint_fix].invoke
+Blacksmith::RakeTask.new do |t|
+  t.tag_pattern = TAG_PATTERN # Use a custom pattern with git tag. %s is replaced with the version number.
 end
 
-desc 'Run acceptance tests'
-RSpec::Core::RakeTask.new(:acceptance) do |t|
-  t.pattern = 'spec/acceptance'
+MetadataJsonLint.options.strict_license = false
+
+PuppetLint.configuration.disable_80chars
+PuppetLint.configuration.disable_140chars
+PuppetLint.configuration.disable_autoloader_layout
+PuppetLint.configuration.ignore_paths = exclude_paths
+PuppetLint.configuration.fail_on_warnings = true
+PuppetLint.configuration.relative = true
+
+PuppetSyntax.check_hiera_keys = true
+PuppetSyntax.exclude_paths = exclude_paths
+
+Rake::Task[:lint].clear
+
+namespace :validate do
+  desc 'Run all module validation tests.'
+  task all: [
+    'jsonlint',
+    'lint',
+    'metadata_lint',
+    'syntax:hiera',
+    'syntax:manifests',
+    'syntax:templates',
+    'rubocop',
+    'spec',
+    'strings:generate'
+  ]
 end
 
-desc 'Run tests'
-task test: [:release_checks]
+desc 'all in 1'
+task release: [
+  'release:tagging',
+  'release:propagate'
+]
 
-namespace :check do
-  desc 'Check for trailing whitespace'
-  task :trailing_whitespace do
-    Dir.glob('**/*.md', File::FNM_DOTMATCH).sort.each do |filename|
-      next if filename =~ %r{^((modules|acceptance|\.?vendor|spec/fixtures|pkg)/|REFERENCE.md)}
-      File.foreach(filename).each_with_index do |line, index|
-        if line =~ %r{\s\n$}
-          puts "#{filename} has trailing whitespace on line #{index + 1}"
-          exit 1
-        end
-      end
+namespace :release do
+  desc 'Module propagatie to the forge'
+  task :propagate do
+    begin
+      Rake::Task['module:push'].invoke
+    rescue StandardError => e
+      raise("Module release upload mislukt: #{e.message}")
+    end
+  end
+  desc 'Module tagging adhv metadata.json, local tag and push remote tag'
+  task :tagging do
+    begin
+      Rake::Task['module:clean'].invoke
+      Rake::Task['module:tag'].invoke
+      git = Git.open(File.dirname(__FILE__), log: Logger.new(STDOUT))
+      
+      version = TAG_PATTERN % [Blacksmith::Modulefile.new.version]
+      
+      git.push(git.remote, "refs/tags/#{version}")
+    rescue StandardError => e
+      raise("Module release tagging mislukt: #{e.message}")
     end
   end
 end
-Rake::Task[:release_checks].enhance ['check:trailing_whitespace']
-
-desc "Run main 'test' task and report merged results to coveralls"
-task test_with_coveralls: [:test] do
-  if Dir.exist?(File.expand_path('../lib', __FILE__))
-    require 'coveralls/rake/task'
-    Coveralls::RakeTask.new
-    Rake::Task['coveralls:push'].invoke
-  else
-    puts 'Skipping reporting to coveralls.  Module has no lib dir'
-  end
-end
-
-desc 'Generate REFERENCE.md'
-task :reference, [:debug, :backtrace] do |t, args|
-  patterns = ''
-  Rake::Task['strings:generate:reference'].invoke(patterns, args[:debug], args[:backtrace])
-end
-
-begin
-  require 'github_changelog_generator/task'
-  GitHubChangelogGenerator::RakeTask.new :changelog do |config|
-    version = (Blacksmith::Modulefile.new).version
-    config.future_release = "v#{version}" if version =~ /^\d+\.\d+.\d+$/
-    config.header = "# Changelog\n\nAll notable changes to this project will be documented in this file.\nEach new release typically also includes the latest modulesync defaults.\nThese should not affect the functionality of the module."
-    config.exclude_labels = %w{duplicate question invalid wontfix wont-fix modulesync skip-changelog}
-    config.user = 'voxpupuli'
-    metadata_json = File.join(File.dirname(__FILE__), 'metadata.json')
-    metadata = JSON.load(File.read(metadata_json))
-    config.project = metadata['name']
-  end
-
-  # Workaround for https://github.com/github-changelog-generator/github-changelog-generator/issues/715
-  require 'rbconfig'
-  if RbConfig::CONFIG['host_os'] =~ /linux/
-    task :changelog do
-      puts 'Fixing line endings...'
-      changelog_file = File.join(__dir__, 'CHANGELOG.md')
-      changelog_txt = File.read(changelog_file)
-      new_contents = changelog_txt.gsub(%r{\r\n}, "\n")
-      File.open(changelog_file, "w") {|file| file.puts new_contents }
-    end
-  end
-
-rescue LoadError
-end
-# vim: syntax=ruby
