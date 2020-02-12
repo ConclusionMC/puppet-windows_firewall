@@ -128,6 +128,9 @@ Layout/AccessModifierIndentation:
 Naming/AccessorMethodName:
   Enabled: false
 
+Naming/HeredocDelimiterNaming:
+  Enabled: false
+
 Style/Alias:
   Enabled: false
 
