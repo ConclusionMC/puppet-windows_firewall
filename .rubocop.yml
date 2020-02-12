@@ -143,6 +143,15 @@ Layout/AlignParameters:
 Metrics/BlockNesting:
   Enabled: false
 
+Metrics/BlockLength:
+  Enabled: false
+
+Metrics/AbcSize:
+  Enabled: false
+
+Metrics/PerceivedComplexity:
+  Enabled: false
+
 Style/AsciiComments:
   Enabled: false
 
@@ -163,6 +172,10 @@ Style/CharacterLiteral:
 
 Naming/ClassAndModuleCamelCase:
   Enabled: false
+
+Naming/UncommunicativeMethodParamName:
+  Enabled: false
+
 
 Style/ClassAndModuleChildren:
   Enabled: false
